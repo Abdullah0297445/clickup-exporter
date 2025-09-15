@@ -1,0 +1,12 @@
+.idea
+.git
+.venv
+.github
+.dockerignore
+.env
+.env.example
+.gitignore
+docker-compose.yml
+Dockerfile
+Makefile
+README.md

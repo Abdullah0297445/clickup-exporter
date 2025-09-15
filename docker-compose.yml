@@ -1,0 +1,39 @@
+x-common-service: &common-service
+  build: .
+  platform: linux/amd64
+  env_file:
+    - .env
+  volumes:
+    - ./app:/app/app
+    - python_env:/app/.venv
+
+services:
+  backend:
+    <<: *common-service
+    command: [ "sh", "-c", "exec uv run --no-default-groups --directory ./app fastapi run main.py --port ${FASTAPI_PORT}" ]
+    ports:
+      - "${FASTAPI_PORT}:${FASTAPI_PORT}"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${FASTAPI_PORT}/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    develop:
+      watch:
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./uv.lock
+        - action: restart
+          path: ./.env
+
+  lint:
+    <<: *common-service
+    command: [ "sh", "-c", "exec uv run --group lint --directory ./app ruff check" ]
+    profiles:
+      - lint
+
+volumes:
+  python_env:

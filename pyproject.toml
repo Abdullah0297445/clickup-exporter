@@ -1,0 +1,24 @@
+[project]
+name = "ClickUpDataExporter"
+version = "0.1.0"
+authors = [
+    { name = "Abdullah Ajmal", email = "abdullah.ajmal@carteblanche.tech" },
+]
+maintainers = [
+    { name = "Abdullah Ajmal", email = "abdullah.ajmal@carteblanche.tech" },
+]
+description = ""
+readme = "README.md"
+keywords = ["fastapi", "clickup", "httpx"]
+requires-python = "==3.13.*"
+dependencies = [
+    "fastapi[standard]==0.116.1",
+    "httpx==0.28.1"
+]
+[dependency-groups]
+lint = [
+    "ruff==0.12.11"
+]
+
+[tool.ruff]
+extend-exclude = ["__init__.py",]
