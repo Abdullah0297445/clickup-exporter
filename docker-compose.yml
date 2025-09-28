@@ -10,7 +10,6 @@ x-common-service: &common-service
 services:
   backend:
     <<: *common-service
-    command: [ "sh", "-c", "exec uv run --no-default-groups --directory ./app fastapi run main.py --port ${FASTAPI_PORT}" ]
     ports:
       - "${FASTAPI_PORT}:${FASTAPI_PORT}"
     restart: unless-stopped

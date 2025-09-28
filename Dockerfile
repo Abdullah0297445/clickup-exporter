@@ -23,3 +23,5 @@ COPY app /app/app
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
+
+CMD uv run --no-default-groups --directory ./app fastapi run main.py --port ${FASTAPI_PORT}
