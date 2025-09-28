@@ -26,26 +26,25 @@ jobs:
           aws-region: ${{ env.AWS_REGION_NAME }}
           role-to-assume: ${{ secrets.CI_ROLE }}
 
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           version: latest
 
-      - name: Build
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          load: true
-          push: false
-          tags: ${{ env.LIGHTSAIL_SERVICE_NAME }}:${{ github.sha }}
+          push: true
+          tags: ${{ secrets.ECR_REPO_URL }}:${{ github.sha }}
 
       - name: Install AWS Lightsail plugin
         shell: bash
         run: |
           sudo curl "https://s3.$AWS_REGION_NAME.amazonaws.com/lightsailctl/latest/linux-amd64/lightsailctl" -o "/usr/local/bin/lightsailctl"
           sudo chmod +x /usr/local/bin/lightsailctl
-
-      - name: Push
-        run: aws lightsail push-container-image --region $AWS_REGION_NAME --service-name $LIGHTSAIL_SERVICE_NAME --label api --image $LIGHTSAIL_SERVICE_NAME:${{ github.sha }}
 
       - name: Deploy
         run: |
@@ -54,7 +53,7 @@ jobs:
           --output yaml \
           --containers "{
             \"$LIGHTSAIL_SERVICE_NAME\": {
-              \"image\": \"$(aws lightsail get-container-images --service-name $LIGHTSAIL_SERVICE_NAME --region $AWS_REGION_NAME | jq -r .containerImages[0].image)\",
+              \"image\": \"${{ secrets.ECR_REPO_URL }}:${{ github.sha }}\",
               \"environment\": {
                   \"CLICKUP_TOKEN\": \"${{ secrets.CLICKUP_TOKEN }}\",
                   \"CLICKUP_TEAM_ID\": \"${{ secrets.CLICKUP_TEAM_ID }}\",
@@ -63,5 +62,13 @@ jobs:
               \"ports\": {
                 \"$API_PORT\": \"HTTP\"
               }
+            }
+          }" \
+          --public-endpoint "{
+            \"containerName\": \"$LIGHTSAIL_SERVICE_NAME\",
+            \"containerPort\": $API_PORT,
+            \"healthCheck\": {
+              \"path\": \"/health\",
+              \"intervalSeconds\": 10
             }
           }"
