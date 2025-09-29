@@ -57,7 +57,8 @@ jobs:
               \"environment\": {
                   \"CLICKUP_TOKEN\": \"${{ secrets.CLICKUP_TOKEN }}\",
                   \"CLICKUP_TEAM_ID\": \"${{ secrets.CLICKUP_TEAM_ID }}\",
-                  \"FASTAPI_PORT\": \"$API_PORT\"
+                  \"FASTAPI_PORT\": \"$API_PORT\",
+                  \"API_AUTH_TOKEN\": \"${{ secrets.API_AUTH_TOKEN }}\"
                 },
               \"ports\": {
                 \"$API_PORT\": \"HTTP\"

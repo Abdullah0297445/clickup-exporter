@@ -17,6 +17,4 @@ lint:
 
 quick_start: down up
 
-start: down quick_start
-
 fresh_start: purge build start
