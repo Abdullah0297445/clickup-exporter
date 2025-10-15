@@ -1,38 +1,98 @@
+name: clickup_exporter
+
 x-common-service: &common-service
   build: .
   platform: linux/amd64
   env_file:
     - .env
   volumes:
-    - ./app:/app/app
+    - ./apps:/app/apps
     - python_env:/app/.venv
+
+x-watch-config:
+  watch: &default-watch
+    - action: rebuild
+      path: ./pyproject.toml
+    - action: rebuild
+      path: ./uv.lock
+    - action: restart
+      path: ./.env
+
+x-workers: &default-worker
+  depends_on:
+    backend:
+      condition: service_healthy
+  stop_grace_period: 2m
+  develop:
+    watch:
+      - <<: *default-watch
 
 services:
   backend:
     <<: *common-service
+    command: [ "sh", "-c", "exec uv run --no-default-groups --directory ./apps uvicorn core.asgi:application --reload --host 0.0.0.0 --port ${DJANGO_PORT}" ]
     ports:
-      - "${FASTAPI_PORT}:${FASTAPI_PORT}"
+      - "${DJANGO_PORT}:${DJANGO_PORT}"
+    depends_on:
+      broker:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:${FASTAPI_PORT}/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:${DJANGO_PORT}/health/" ]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 15s
     develop:
       watch:
-        - action: rebuild
-          path: ./pyproject.toml
-        - action: rebuild
-          path: ./uv.lock
-        - action: restart
-          path: ./.env
+        - <<: *default-watch
 
   lint:
-    <<: *common-service
-    command: [ "sh", "-c", "exec uv run --group lint --directory ./app ruff check" ]
+    build: .
+    command: [ "sh", "-c", "exec uv run --no-dev --group lint --directory ./apps ruff check" ]
+    volumes:
+      - ./apps:/app/apps
+      - python_env:/app/.venv
     profiles:
       - lint
 
+  scheduler:
+    <<: [ *common-service, *default-worker ]
+    command: [ "sh", "-c", "exec uv run --no-group lint --directory ./apps watchfiles --filter python 'uv run celery -A core beat -l info'" ]
+
+  worker:
+    <<: [ *common-service, *default-worker ]
+    command: [ "sh", "-c", "exec uv run --no-group lint --directory ./apps watchfiles --filter python 'uv run celery -A core worker --loglevel=info --concurrency=1'" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "uv run --directory ./apps celery -A core inspect ping" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  flower:
+    <<: [ *common-service, *default-worker ]
+    command: [ "sh", "-c", "exec uv run --no-group lint --directory ./apps watchfiles --filter python 'uv run celery -A core flower --persistent=True --db=\"flower_db\" --basic-auth=\"${FLOWER_USERNAME}:${FLOWER_PASSWORD}\"'" ]
+    ports:
+      - "5557:5555"
+    depends_on:
+      worker:
+        condition: service_healthy
+
+  broker:
+    image: redis/redis-stack:7.4.0-v7
+    volumes:
+      - broker_data:/data
+    ports:
+      - "${BROKER_PORT}:${BROKER_PORT}"
+      - "${REDIS_STACK_PORT}:8001"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
 volumes:
   python_env:
+  broker_data:

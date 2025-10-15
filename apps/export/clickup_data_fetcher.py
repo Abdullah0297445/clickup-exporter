@@ -1,41 +1,14 @@
-import os
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime, UTC
-
 import httpx
-from fastapi import FastAPI, HTTPException, Security, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from django.utils import timezone
+from typing import Any, Optional
 
-CLICKUP_TOKEN = os.getenv("CLICKUP_TOKEN", "pk_YOUR_CLICKUP_TOKEN_HERE")
-CLICKUP_TEAM_ID = os.getenv("CLICKUP_TEAM_ID", "YOUR_TEAM_ID_HERE")
-API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "")
-PAGE_SIZE = int(os.getenv("PAGE_SIZE", "100"))
-CONCURRENCY = int(os.getenv("CONCURRENCY", "8"))
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", "5"))
-INITIAL_BACKOFF = float(os.getenv("INITIAL_BACKOFF", "1.0"))
+from export.exceptions import ExportError
+from export.config import CLICKUP_TOKEN, CLICKUP_TEAM_ID, CONCURRENCY, MAX_RETRIES, PAGE_SIZE, INITIAL_BACKOFF
+
 
 BASE = "https://api.clickup.com/api/v2"
-HEADERS = {"Authorization": CLICKUP_TOKEN, "Accept": "application/json"}
-
-app = FastAPI(title="ClickUp Data Export")
-security = HTTPBearer()
-
-
-def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)):
-    if not API_AUTH_TOKEN:
-        raise HTTPException(
-            status_code=500,
-            detail="Server configuration error: API_AUTH_TOKEN not set"
-        )
-
-    if credentials.credentials != API_AUTH_TOKEN:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token"
-        )
-
-    return credentials.credentials
+HEADERS = {"Authorization": CLICKUP_TOKEN, "Accept": "application/json", "Accept-Encoding": "gzip, deflate, br"}
 
 
 async def request_with_retry(
@@ -54,7 +27,7 @@ async def request_with_retry(
             resp = await client.request(method, url, params=params, json=json_body, timeout=30.0)
         except (httpx.RequestError, httpx.HTTPError) as e:
             if attempt >= max_retries:
-                raise HTTPException(status_code=502, detail=f"Network error: {str(e)}")
+                raise ExportError(502, f"Network error: {e}")
             await asyncio.sleep(backoff)
             backoff *= 2
             continue
@@ -67,27 +40,27 @@ async def request_with_retry(
         elif resp.status_code == 204:
             return None
         elif resp.status_code == 429:
-            # Rate limit: respect Retry-After if present
             ra = resp.headers.get("Retry-After")
             wait = float(ra) if ra else backoff
             await asyncio.sleep(wait + (backoff * 0.1))
             backoff *= 2
             if attempt >= max_retries:
-                raise HTTPException(status_code=429, detail="Rate limited by ClickUp (429) and max retries exceeded")
+                raise ExportError(429, "Rate limited by ClickUp and max retries exceeded")
             continue
         elif 500 <= resp.status_code < 600:
             if attempt >= max_retries:
-                raise HTTPException(status_code=502, detail=f"ClickUp server error {resp.status_code}")
+                raise ExportError(502, f"ClickUp server error {resp.status_code}")
             await asyncio.sleep(backoff)
             backoff *= 2
             continue
         else:
-            raise HTTPException(status_code=resp.status_code, detail=f"ClickUp API error: {resp.text}")
+            # Unexpected client error
+            raise ExportError(resp.status_code, f"ClickUp API error: {resp.text}")
 
 
-async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> List[dict]:
+async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> list[dict]:
     page = 0
-    all_tasks: List[dict] = []
+    all_tasks: list[dict] = []
     while True:
         params = {"page": page, "limit": PAGE_SIZE, "include_closed": "true"}
         url = f"{BASE}/list/{list_id}/task"
@@ -103,11 +76,17 @@ async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> List[d
 
 
 async def paginate_time_entries_for_list(
-    client: httpx.AsyncClient, team_id: str, list_id: str) -> List[dict]:
+    client: httpx.AsyncClient, team_id: str, list_id: str
+) -> list[dict]:
     page = 0
-    all_entries: List[dict] = []
+    all_entries: list[dict] = []
     while True:
-        params: Dict[str, Any] = {"list_id": list_id, "page": page, "start": 1735671600000, "end": datetime.now(UTC).timestamp() * 1000}
+        params: dict[str, Any] = {
+            "list_id": list_id,
+            "page": page,
+            "start": 1735671600000,
+            "end": int(timezone.now().timestamp() * 1000),
+        }
         url = f"{BASE}/team/{team_id}/time_entries"
         data = await request_with_retry(client, "GET", url, params=params)
         entries = data.get("time_entries", []) if data else []
@@ -120,19 +99,19 @@ async def paginate_time_entries_for_list(
     return all_entries
 
 
-async def get_spaces(client: httpx.AsyncClient, team_id: str) -> List[dict]:
+async def get_spaces(client: httpx.AsyncClient, team_id: str) -> list[dict]:
     url = f"{BASE}/team/{team_id}/space"
     data = await request_with_retry(client, "GET", url)
     return data.get("spaces", []) if data else []
 
 
-async def get_lists_for_space(client: httpx.AsyncClient, space_id: str) -> List[dict]:
+async def get_lists_for_space(client: httpx.AsyncClient, space_id: str) -> list[dict]:
     url = f"{BASE}/space/{space_id}/list"
     data = await request_with_retry(client, "GET", url)
     return data.get("lists", []) if data else []
 
 
-async def get_lists_for_folder(client: httpx.AsyncClient, folder_id: str) -> List[dict]:
+async def get_lists_for_folder(client: httpx.AsyncClient, folder_id: str) -> list[dict]:
     url = f"{BASE}/folder/{folder_id}/list"
     data = await request_with_retry(client, "GET", url)
     return data.get("lists", []) if data else []
@@ -147,12 +126,8 @@ def ms_to_hours(ms: Optional[int]) -> Optional[float]:
         return None
 
 
-def aggregate_time_entries_by_task(entries: List[dict]) -> Dict[str, List[dict]]:
-    """
-    Returns mapping: task_id -> list of {assignee_id, assignee_name, billable_ms, non_billable_ms}
-    """
-    agg: Dict[str, Dict[str, Dict[str, Any]]] = {}
-
+def aggregate_time_entries_by_task(entries: list[dict]) -> dict[str, list[dict]]:
+    agg: dict[str, dict[str, dict[str, Any]]] = {}
     for e in entries:
         task_id = e.get("task_id") or (e.get("task") or {}).get("id")
         if not task_id:
@@ -171,7 +146,7 @@ def aggregate_time_entries_by_task(entries: List[dict]) -> Dict[str, List[dict]]
         else:
             user_bucket["non_billable_ms"] += duration
 
-    result: Dict[str, List[dict]] = {}
+    result: dict[str, list[dict]] = {}
     for task_id, users in agg.items():
         lst = []
         for uid, v in users.items():
@@ -194,7 +169,7 @@ async def process_list_worker(
     client: httpx.AsyncClient,
     team_id: str,
     lst: dict
-) -> Tuple[str, List[dict], List[dict], dict]:
+) -> tuple[str, list[dict], list[dict], dict]:
     async with sem:
         list_id = str(lst.get("id"))
         tasks = await paginate_list_tasks(client, list_id)
@@ -208,7 +183,6 @@ async def process_list_worker(
             "folder_id": lst.get("_folder_id"),
             "folder_name": lst.get("_folder_name"),
         }
-        # annotate tasks with metadata for easy flattening
         for t in tasks:
             t["_source_list_id"] = meta["list_id"]
             t["_source_list_name"] = meta["list_name"]
@@ -224,31 +198,27 @@ async def process_list_worker(
         return list_id, tasks, time_entries, meta
 
 
-@app.get("/export")
-async def export_clickup(token: str = Depends(verify_token)):
-    team_id = CLICKUP_TEAM_ID
-    if CLICKUP_TOKEN.startswith("pk_YOUR") or team_id.startswith("YOUR"):
-        raise HTTPException(status_code=400, detail="Please set CLICKUP_TOKEN and CLICKUP_TEAM_ID (or pass team_id in request body).")
+async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
+    team_id = team_id or CLICKUP_TEAM_ID
+    if CLICKUP_TOKEN.startswith("pk_YOUR") or str(team_id).startswith("YOUR"):
+        raise ExportError(400, "Please set CLICKUP_TOKEN and CLICKUP_TEAM_ID (or pass team_id).")
 
     concurrency = CONCURRENCY
     sem = asyncio.Semaphore(concurrency)
+    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=10)
 
-    limits = httpx.Limits(max_connections=concurrency + 10, max_keepalive_connections=10)
     async with httpx.AsyncClient(limits=limits, headers=HEADERS) as client:
-        # 1) gather spaces
         spaces = await get_spaces(client, team_id)
 
-        # 2) gather lists for each space (in parallel, but limited)
-        # We'll fetch lists for spaces concurrently but small in number typically.
+        # fetch lists for each space
         list_fetch_coros = [get_lists_for_space(client, str(s.get("id"))) for s in spaces]
         lists_results = await asyncio.gather(*list_fetch_coros)
-        lists_all: List[dict] = []
+        lists_all: list[dict] = []
         for sp, lists in zip(spaces, lists_results):
             for lst in lists:
                 lst["_space_id"] = str(sp.get("id"))
                 lst["_space_name"] = sp.get("name")
                 lists_all.append(lst)
-            # also handle folders in the space
             folders = sp.get("folders") or []
             if folders:
                 folder_coros = [get_lists_for_folder(client, str(f.get("id"))) for f in folders]
@@ -261,7 +231,7 @@ async def export_clickup(token: str = Depends(verify_token)):
                         fl["_folder_name"] = folder_obj.get("name")
                         lists_all.append(fl)
 
-        # dedupe lists by id
+        # dedupe
         seen = set()
         deduped_lists = []
         for l in lists_all:
@@ -270,13 +240,8 @@ async def export_clickup(token: str = Depends(verify_token)):
                 deduped_lists.append(l)
                 seen.add(lid)
 
-        # 3) Kick off a worker for each list but controlled by semaphore
-        tasks_coros = [
-            process_list_worker(sem, client, team_id, lst)
-            for lst in deduped_lists
-        ]
+        tasks_coros = [process_list_worker(sem, client, team_id, lst) for lst in deduped_lists]
 
-        # run coroutines in chunks to avoid creating thousands at once (safer)
         CHUNK = max(10, concurrency)
         results = []
         for i in range(0, len(tasks_coros), CHUNK):
@@ -284,27 +249,24 @@ async def export_clickup(token: str = Depends(verify_token)):
             chunk_res = await asyncio.gather(*chunk)
             results.extend(chunk_res)
 
-        # 4) Collect tasks & time entries and metadata
-        all_tasks: List[dict] = []
-        all_time_entries: List[dict] = []
-        list_meta_map: Dict[str, dict] = {}
+        all_tasks: list[dict] = []
+        all_time_entries: list[dict] = []
+        list_meta_map: dict[str, dict] = {}
         for list_id, tasks, time_entries, meta in results:
             list_meta_map[list_id] = meta
             all_tasks.extend(tasks)
             all_time_entries.extend(time_entries)
 
-        # 5) Aggregate time entries
         task_time_summary = aggregate_time_entries_by_task(all_time_entries)
 
-        # 6) Build flattened task records
-        flattened: List[dict] = []
+        flattened: list[dict] = []
         for t in all_tasks:
             task_id = t.get("id")
             name = t.get("name")
             status = t.get("status") or {}
             status_text = status.get("status") if isinstance(status, dict) else status
             assignees = t.get("assignees") or []
-            assignees_text = "; ".join([a.get("username") or a.get("id") for a in assignees])
+            assignees_text = "; ".join([a.get("username") or str(a.get("id")) for a in assignees])
             due_date = t.get("due_date")
             date_created = t.get("date_created")
             time_estimate_ms = t.get("time_estimate") or None
@@ -339,9 +301,4 @@ async def export_clickup(token: str = Depends(verify_token)):
                 }
             )
 
-        return {"status": "ok", "task_count": len(flattened), "tasks": flattened}
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "time": datetime.now(tz=UTC).isoformat() + "Z"}
+        return flattened

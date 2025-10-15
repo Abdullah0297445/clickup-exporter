@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -o errexit
+set -o nounset
+
+worker_ready() {
+    uv run --no-group lint --no-group dev --directory ./apps celery -A core inspect ping
+}
+
+until worker_ready; do
+  >&2 echo 'Celery workers not available'
+  sleep 1
+done
+>&2 echo 'Celery workers is available'
+
+
+exec uv run --no-group lint --no-group dev --directory ./apps celery -A core flower --basic-auth="${FLOWER_USERNAME}:${FLOWER_PASSWORD}"

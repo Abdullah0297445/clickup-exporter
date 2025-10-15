@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -o errexit
+set -o nounset
+
+# Check if any argument is passed to this script. If so, run the command with all arguments
+if [[ $# -ge 1 && -n $1 ]]
+then
+    uv run --no-default-groups --directory ./apps manage.py "$@"
+    exit 0
+fi

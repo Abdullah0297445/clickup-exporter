@@ -2,12 +2,11 @@
 .git
 .venv
 .github
+pgadmin
 .dockerignore
-.env
 .env.example
 .gitignore
 docker-compose.yml
 Dockerfile
 Makefile
 README.md
-LICENSE

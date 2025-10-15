@@ -9,16 +9,23 @@ maintainers = [
 ]
 description = ""
 readme = "README.md"
-keywords = ["fastapi", "clickup", "httpx"]
-requires-python = "==3.13.*"
+keywords = ["django", "celery", "clickup", "httpx", "uv", "docker", "asgi"]
+requires-python = "==3.14.*"
 dependencies = [
-    "fastapi[standard]==0.116.1",
-    "httpx==0.28.1"
+    "Django==5.2.7",
+    "celery[redis,auth,gevent]==5.5.3",
+    "flower==2.0.1",
+    "gunicorn[setproctitle]==23.0.0",
+    "uvicorn-worker==0.4.0",
+    "httpx[brotli]==0.28.1"
 ]
 [dependency-groups]
+dev = [
+    "watchfiles==1.1.0"
+]
 lint = [
-    "ruff==0.12.11"
+    "ruff==0.14.0"
 ]
 
 [tool.ruff]
-extend-exclude = ["__init__.py",]
+extend-exclude = ["__init__.py", "settings/*.py"]
