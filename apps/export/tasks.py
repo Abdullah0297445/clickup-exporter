@@ -7,7 +7,7 @@ from django.core.cache import cache
 from celery import shared_task
 
 from export import config
-from export.cache import get_current_cache_version
+from export.cache import get_current_cache_version, get_old_cache_version
 from export.clickup_data_fetcher import export_clickup_data
 from export.exceptions import ExportError, ClickupTeamIDMissing
 
@@ -55,6 +55,7 @@ def fetch_clickup_data_and_persist(self) -> dict:
             "updated_at": timezone.now().isoformat(),
         }
         cache.set(team_id, json.dumps(store), version=version)
+        cache.delete(team_id, version=get_old_cache_version())
         return {"status": "success"}
     finally:
         try:
