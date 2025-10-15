@@ -74,7 +74,7 @@ services:
     <<: [ *common-service, *default-worker ]
     command: [ "sh", "-c", "exec uv run --no-group lint --directory ./apps watchfiles --filter python 'uv run celery -A core flower --persistent=True --db=\"flower_db\" --basic-auth=\"${FLOWER_USERNAME}:${FLOWER_PASSWORD}\"'" ]
     ports:
-      - "5557:5555"
+      - "${FLOWER_PORT}:5555"
     depends_on:
       worker:
         condition: service_healthy
@@ -84,7 +84,6 @@ services:
     volumes:
       - broker_data:/data
     ports:
-      - "${BROKER_PORT}:${BROKER_PORT}"
       - "${REDIS_STACK_PORT}:8001"
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
