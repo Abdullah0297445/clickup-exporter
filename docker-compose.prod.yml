@@ -1,0 +1,78 @@
+name: clickup_exporter
+
+x-common-service: &common-service
+  image: "${DOCKER_IMAGE_URL}"
+  env_file:
+    - .env
+
+x-workers: &default-worker
+  depends_on:
+    backend:
+      condition: service_healthy
+  stop_grace_period: 2m
+
+services:
+  backend:
+    <<: *common-service
+    command: [ "/start" ]
+    depends_on:
+      broker:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:${DJANGO_PORT}/health/" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  scheduler:
+    <<: [ *common-service, *default-worker ]
+    command: [ "/start_beat" ]
+
+  worker:
+    <<: [ *common-service, *default-worker ]
+    command: [ "/start_worker" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "uv run --no-default-groups --directory ./apps celery -A core inspect ping" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  flower:
+    <<: [ *common-service, *default-worker ]
+    command: [ "/start_flower" ]
+    ports:
+      - "${FLOWER_PORT}:5555"
+    depends_on:
+      worker:
+        condition: service_healthy
+
+  nginx:
+    image: nginx
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates
+    ports:
+      - "${NGINX_PORT}:${NGINX_PORT}"
+    env_file:
+      - .env
+
+  broker:
+    image: redis/redis-stack:7.4.0-v7
+    volumes:
+      - broker_data:/data
+    ports:
+      - "${REDIS_STACK_PORT}:8001"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  broker_data:

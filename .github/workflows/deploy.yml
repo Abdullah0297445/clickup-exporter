@@ -37,3 +37,16 @@ jobs:
         with:
           push: true
           tags: ${{ secrets.ECR_REPO_URL }}:${{ github.sha }}
+
+      - name: Deploy on EC2 via SSM
+        if: success()
+        env:
+          IMAGE_URL: ${{ secrets.ECR_REPO_URL }}:${{ github.sha }}
+        run: |
+          echo "Deploying $IMAGE_URL to EC2 via SSM..."
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --targets "Key=tag:Name,Values=clickup-exporter" \
+            --parameters commands=["bash -lc 'export DOCKER_IMAGE_URL=${IMAGE_URL} && cd /home/ec2-user/app && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d'"] \
+            --comment "GitHub Actions deploy: ${IMAGE_URL}" \
+            --region ${{ env.AWS_REGION_NAME }}

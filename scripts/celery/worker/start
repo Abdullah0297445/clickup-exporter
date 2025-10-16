@@ -3,4 +3,4 @@
 set -o errexit
 set -o nounset
 
-exec uv run --no-group lint --no-group dev --directory ./apps celery -A core worker --loglevel=info --concurrency=1
+exec uv run --no-default-groups --directory ./apps celery -A core worker --loglevel=info --concurrency=1

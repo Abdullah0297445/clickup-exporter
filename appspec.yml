@@ -1,0 +1,8 @@
+version: 0.0
+os: linux
+
+files:
+  - source: nginx/
+    destination: /home/ex2-user/app/nginx
+  - source: docker-compose.prod.yml
+    destination: /home/ex2-user/app/docker-compose.prod.yml
