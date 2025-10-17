@@ -1,11 +1,11 @@
 #!/bin/bash
 
-COMPOSE_FILE="/home/ec2-user/app/docker-compose.prod.yml"
+cd /home/ec2-user/app
 
 log "Pulling images"
-docker compose -f "${COMPOSE_FILE}" pull
+docker compose -f docker-compose.prod.yml pull
 log "Bringing stack up"
-docker compose -f "${COMPOSE_FILE}" up -d --remove-orphans
+docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans
 
 log "Deployment complete."
 exit 0

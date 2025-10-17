@@ -6,6 +6,10 @@ upstream redisstack {
     server broker:${REDIS_STACK_PORT};
 }
 
+upstream flower {
+    server flower:${FLOWER_PORT};
+}
+
 server {
     listen ${NGINX_PORT};
 
@@ -31,5 +35,19 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_pass http://redisstack;
+    }
+}
+
+server {
+    listen 80;
+
+    server_name flower.${NGINX_HOST};
+
+    location / {
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://flower;
     }
 }
