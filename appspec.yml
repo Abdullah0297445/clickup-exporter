@@ -8,6 +8,8 @@ files:
     destination: /home/ec2-user/app
   - source: scripts/after_install.sh
     destination: /home/ec2-user/app/scripts
+  - source: .image_uri_env
+    destination: /home/ec2-user/app
 
 hooks:
   AfterInstall:
