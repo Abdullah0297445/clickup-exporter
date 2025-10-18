@@ -3,7 +3,7 @@ upstream backend {
 }
 
 upstream redisstack {
-    server broker:${REDIS_STACK_PORT};
+    server broker:8001;
 }
 
 upstream flower {
@@ -25,7 +25,7 @@ server {
 }
 
 server {
-    listen 80;
+    listen ${NGINX_PORT};
 
     server_name redis.${NGINX_HOST};
 
@@ -39,7 +39,7 @@ server {
 }
 
 server {
-    listen 80;
+    listen ${NGINX_PORT};
 
     server_name flower.${NGINX_HOST};
 

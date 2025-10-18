@@ -43,8 +43,6 @@ services:
   flower:
     <<: [ *common-service, *default-worker ]
     command: [ "/start_flower" ]
-    ports:
-      - "${FLOWER_PORT}:5555"
     depends_on:
       worker:
         condition: service_healthy
@@ -54,6 +52,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      broker:
+        condition: service_healthy
+      flower:
+        condition: service_started
     volumes:
       - ./nginx/templates:/etc/nginx/templates
     ports:
@@ -65,8 +67,6 @@ services:
     image: redis/redis-stack:7.4.0-v7
     volumes:
       - broker_data:/data
-    ports:
-      - "${REDIS_STACK_PORT}:8001"
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
