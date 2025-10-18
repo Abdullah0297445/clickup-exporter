@@ -21,10 +21,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev
 
 COPY ./scripts/run_command /run_command
+RUN chmod +x /run_command
 COPY ./scripts/celery/beat/start /start_beat
+RUN chmod +x /start_beat
 COPY ./scripts/celery/flower/start /start_flower
+RUN chmod +x /start_flower
 COPY ./scripts/celery/worker/start /start_worker
+RUN chmod +x /start_worker
 COPY ./scripts/start /start
+RUN chmod +x /start
 COPY ./pyproject.toml ./uv.lock /app/
 COPY ./apps /app/apps
 
