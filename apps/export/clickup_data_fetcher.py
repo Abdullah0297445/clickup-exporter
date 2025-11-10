@@ -4,7 +4,7 @@ from django.utils import timezone
 from typing import Any, Optional
 
 from export.exceptions import ExportError
-from export.config import CLICKUP_TOKEN, CLICKUP_TEAM_ID, CONCURRENCY, MAX_RETRIES, PAGE_SIZE, INITIAL_BACKOFF
+from export.config import CLICKUP_TOKEN, CLICKUP_TEAM_ID, CONCURRENCY, MAX_RETRIES, INITIAL_BACKOFF
 
 
 BASE = "https://api.clickup.com/api/v2"
@@ -62,40 +62,34 @@ async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> list[d
     page = 0
     all_tasks: list[dict] = []
     while True:
-        params = {"page": page, "limit": PAGE_SIZE, "include_closed": "true"}
+        params = {"page": page, "include_closed": "true"}
         url = f"{BASE}/list/{list_id}/task"
         data = await request_with_retry(client, "GET", url, params=params)
         tasks = data.get("tasks", []) if data else []
         if not tasks:
             break
         all_tasks.extend(tasks)
-        if len(tasks) < PAGE_SIZE:
+        if data.get("last_page"):
             break
         page += 1
     return all_tasks
 
 
-async def paginate_time_entries_for_list(
-    client: httpx.AsyncClient, team_id: str, list_id: str
+async def get_time_entries_for_list(
+    client: httpx.AsyncClient, team_id: str, list_id: str, member_ids: list[int]
 ) -> list[dict]:
-    page = 0
     all_entries: list[dict] = []
-    while True:
-        params: dict[str, Any] = {
-            "list_id": list_id,
-            "page": page,
-            "start": 1735671600000,
-            "end": int(timezone.now().timestamp() * 1000),
-        }
-        url = f"{BASE}/team/{team_id}/time_entries"
-        data = await request_with_retry(client, "GET", url, params=params)
-        entries = data.get("time_entries", []) if data else []
-        if not entries:
-            break
-        all_entries.extend(entries)
-        if len(entries) < PAGE_SIZE:
-            break
-        page += 1
+    params: dict[str, Any] = {
+        "list_id": list_id,
+        "start": 1735671600000,
+        "end": int(timezone.now().timestamp() * 1000),
+        "assignee": ",".join(member_ids),
+        "include_location_names": True
+    }
+    url = f"{BASE}/team/{team_id}/time_entries"
+    data = await request_with_retry(client, "GET", url, params=params)
+    entries = data.get("data", []) if data else []
+    all_entries.extend(entries)
     return all_entries
 
 
@@ -111,10 +105,10 @@ async def get_lists_for_space(client: httpx.AsyncClient, space_id: str) -> list[
     return data.get("lists", []) if data else []
 
 
-async def get_lists_for_folder(client: httpx.AsyncClient, folder_id: str) -> list[dict]:
-    url = f"{BASE}/folder/{folder_id}/list"
+async def get_lists_for_folder(client: httpx.AsyncClient, space_id: str) -> list[dict]:
+    url = f"{BASE}/space/{space_id}/folder"
     data = await request_with_retry(client, "GET", url)
-    return data.get("lists", []) if data else []
+    return data.get("folders", []) if data else []
 
 
 def ms_to_hours(ms: Optional[int]) -> Optional[float]:
@@ -129,15 +123,14 @@ def ms_to_hours(ms: Optional[int]) -> Optional[float]:
 def aggregate_time_entries_by_task(entries: list[dict]) -> dict[str, list[dict]]:
     agg: dict[str, dict[str, dict[str, Any]]] = {}
     for e in entries:
-        task_id = e.get("task_id") or (e.get("task") or {}).get("id")
-        if not task_id:
+        try:
+            task_id = e["task"]["id"]
+        except KeyError:
             continue
-        user = e.get("user") or {}
-        user_id = user.get("id") or e.get("user_id") or "unknown_user"
-        username = user.get("username") or user.get("email") or user.get("name") or str(user_id)
-        duration = e.get("duration") or 0
-        billable_flag = e.get("billable")
-        billable = bool(billable_flag) if billable_flag is not None else False
+        user_id = e["user"]["id"]
+        username = e["user"]["username"]
+        duration = e["duration"]
+        billable = e["billable"]
 
         task_bucket = agg.setdefault(task_id, {})
         user_bucket = task_bucket.setdefault(user_id, {"assignee_name": username, "billable_ms": 0, "non_billable_ms": 0})
@@ -168,34 +161,18 @@ async def process_list_worker(
     sem: asyncio.Semaphore,
     client: httpx.AsyncClient,
     team_id: str,
-    lst: dict
-) -> tuple[str, list[dict], list[dict], dict]:
+    lst: dict,
+    member_ids: list[int]
+) -> tuple[str, list[dict], list[dict]]:
     async with sem:
         list_id = str(lst.get("id"))
         tasks = await paginate_list_tasks(client, list_id)
-        time_entries = await paginate_time_entries_for_list(client, team_id, list_id)
-
-        meta = {
-            "list_id": list_id,
-            "list_name": lst.get("name"),
-            "space_id": lst.get("_space_id") or lst.get("space_id"),
-            "space_name": lst.get("_space_name") or lst.get("_space_name") or lst.get("space_name"),
-            "folder_id": lst.get("_folder_id"),
-            "folder_name": lst.get("_folder_name"),
-        }
+        tasks_with_space_name = []
         for t in tasks:
-            t["_source_list_id"] = meta["list_id"]
-            t["_source_list_name"] = meta["list_name"]
-            t["_source_space_id"] = meta["space_id"]
-            t["_source_space_name"] = meta["space_name"]
-            if meta.get("folder_id"):
-                t["_source_folder_id"] = meta["folder_id"]
-                t["_source_folder_name"] = meta["folder_name"]
-
-        for te in time_entries:
-            te["_queried_list_id"] = list_id
-
-        return list_id, tasks, time_entries, meta
+            t["space"]["name"] = lst["space"]["name"]
+            tasks_with_space_name.append(t)
+        time_entries = await get_time_entries_for_list(client, team_id, list_id, member_ids)
+        return list_id, tasks, time_entries
 
 
 async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
@@ -205,42 +182,37 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
     concurrency = CONCURRENCY
     sem = asyncio.Semaphore(concurrency)
-    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=10)
+    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=5)
 
     async with httpx.AsyncClient(limits=limits, headers=HEADERS) as client:
         spaces = await get_spaces(client, team_id)
+        member_ids: list[int] = []
 
-        # fetch lists for each space
+        for s in spaces:
+            if s.get("members"):
+                for m in s["members"]:
+                    member_ids.append(m["user"]["id"])
+
+        all_lists: list[dict] = []
         list_fetch_coros = [get_lists_for_space(client, str(s.get("id"))) for s in spaces]
+        folder_coros = [get_lists_for_folder(client, str(s.get("id"))) for s in spaces]
         lists_results = await asyncio.gather(*list_fetch_coros)
-        lists_all: list[dict] = []
-        for sp, lists in zip(spaces, lists_results):
-            for lst in lists:
-                lst["_space_id"] = str(sp.get("id"))
-                lst["_space_name"] = sp.get("name")
-                lists_all.append(lst)
-            folders = sp.get("folders") or []
-            if folders:
-                folder_coros = [get_lists_for_folder(client, str(f.get("id"))) for f in folders]
-                folder_lists_results = await asyncio.gather(*folder_coros)
-                for folder_obj, folder_lists in zip(folders, folder_lists_results):
-                    for fl in folder_lists:
-                        fl["_space_id"] = str(sp.get("id"))
-                        fl["_space_name"] = sp.get("name")
-                        fl["_folder_id"] = str(folder_obj.get("id"))
-                        fl["_folder_name"] = folder_obj.get("name")
-                        lists_all.append(fl)
+        folder_lists_results = await asyncio.gather(*folder_coros)
 
-        # dedupe
+        for l in lists_results:
+            all_lists.extend(l)
+        for f in folder_lists_results:
+            all_lists.extend(f["lists"])
+
         seen = set()
         deduped_lists = []
-        for l in lists_all:
+        for l in all_lists:
             lid = str(l.get("id"))
             if lid not in seen:
                 deduped_lists.append(l)
                 seen.add(lid)
 
-        tasks_coros = [process_list_worker(sem, client, team_id, lst) for lst in deduped_lists]
+        tasks_coros = [process_list_worker(sem, client, team_id, lst, member_ids) for lst in deduped_lists]
 
         CHUNK = max(10, concurrency)
         results = []
@@ -251,54 +223,15 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
         all_tasks: list[dict] = []
         all_time_entries: list[dict] = []
-        list_meta_map: dict[str, dict] = {}
         for list_id, tasks, time_entries, meta in results:
-            list_meta_map[list_id] = meta
             all_tasks.extend(tasks)
             all_time_entries.extend(time_entries)
 
         task_time_summary = aggregate_time_entries_by_task(all_time_entries)
 
-        flattened: list[dict] = []
+        tasks_with_time_summary: list[dict] = []
         for t in all_tasks:
-            task_id = t.get("id")
-            name = t.get("name")
-            status = t.get("status") or {}
-            status_text = status.get("status") if isinstance(status, dict) else status
-            assignees = t.get("assignees") or []
-            assignees_text = "; ".join([a.get("username") or str(a.get("id")) for a in assignees])
-            due_date = t.get("due_date")
-            date_created = t.get("date_created")
-            time_estimate_ms = t.get("time_estimate") or None
-            time_spent_ms = t.get("time_spent") or None
-            time_estimate_hours = ms_to_hours(time_estimate_ms)
-            time_spent_hours = ms_to_hours(time_spent_ms)
-            source_list_id = t.get("_source_list_id")
-            source_list_name = t.get("_source_list_name")
-            source_space_id = t.get("_source_space_id")
-            source_space_name = t.get("_source_space_name")
-            custom_fields = t.get("custom_fields") or []
-            time_summary = task_time_summary.get(task_id, [])
+            t["time_summary"] = task_time_summary.get(t["id"], list())
+            tasks_with_time_summary.append(t)
 
-            flattened.append(
-                {
-                    "id": task_id,
-                    "name": name,
-                    "status": status_text,
-                    "assignees_text": assignees_text,
-                    "due_date": due_date,
-                    "date_created": date_created,
-                    "time_estimate_ms": time_estimate_ms,
-                    "time_estimate_hours": time_estimate_hours,
-                    "time_spent_ms": time_spent_ms,
-                    "time_spent_hours": time_spent_hours,
-                    "source_list_id": source_list_id,
-                    "source_list_name": source_list_name,
-                    "source_space_id": source_space_id,
-                    "source_space_name": source_space_name,
-                    "custom_fields": custom_fields,
-                    "time_summary": time_summary,
-                }
-            )
-
-        return flattened
+        return tasks_with_time_summary
