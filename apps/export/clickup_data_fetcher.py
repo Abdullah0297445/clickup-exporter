@@ -76,7 +76,7 @@ async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> list[d
 
 
 async def get_time_entries_for_list(
-    client: httpx.AsyncClient, team_id: str, list_id: str, member_ids: list[int]
+    client: httpx.AsyncClient, team_id: str, list_id: str, member_ids: list[str]
 ) -> list[dict]:
     all_entries: list[dict] = []
     params: dict[str, Any] = {
@@ -108,7 +108,11 @@ async def get_lists_for_space(client: httpx.AsyncClient, space_id: str) -> list[
 async def get_lists_for_folder(client: httpx.AsyncClient, space_id: str) -> list[dict]:
     url = f"{BASE}/space/{space_id}/folder"
     data = await request_with_retry(client, "GET", url)
-    return data.get("folders", []) if data else []
+    lists = []
+    if data.get("folders"):
+        for f in data["folders"]:
+            lists.extend(f.get("lists", []))
+    return lists
 
 
 def ms_to_hours(ms: Optional[int]) -> Optional[float]:
@@ -135,9 +139,9 @@ def aggregate_time_entries_by_task(entries: list[dict]) -> dict[str, list[dict]]
         task_bucket = agg.setdefault(task_id, {})
         user_bucket = task_bucket.setdefault(user_id, {"assignee_name": username, "billable_ms": 0, "non_billable_ms": 0})
         if billable:
-            user_bucket["billable_ms"] += duration
+            user_bucket["billable_ms"] += int(duration)
         else:
-            user_bucket["non_billable_ms"] += duration
+            user_bucket["non_billable_ms"] += int(duration)
 
     result: dict[str, list[dict]] = {}
     for task_id, users in agg.items():
@@ -162,8 +166,8 @@ async def process_list_worker(
     client: httpx.AsyncClient,
     team_id: str,
     lst: dict,
-    member_ids: list[int]
-) -> tuple[str, list[dict], list[dict]]:
+    member_ids: list[str]
+) -> tuple[list[dict], list[dict]]:
     async with sem:
         list_id = str(lst.get("id"))
         tasks = await paginate_list_tasks(client, list_id)
@@ -172,7 +176,7 @@ async def process_list_worker(
             t["space"]["name"] = lst["space"]["name"]
             tasks_with_space_name.append(t)
         time_entries = await get_time_entries_for_list(client, team_id, list_id, member_ids)
-        return list_id, tasks, time_entries
+        return tasks, time_entries
 
 
 async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
@@ -186,23 +190,23 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
     async with httpx.AsyncClient(limits=limits, headers=HEADERS) as client:
         spaces = await get_spaces(client, team_id)
-        member_ids: list[int] = []
+        member_ids: list[str] = []
 
         for s in spaces:
             if s.get("members"):
                 for m in s["members"]:
-                    member_ids.append(m["user"]["id"])
+                    member_ids.append(str(m["user"]["id"]))
 
         all_lists: list[dict] = []
-        list_fetch_coros = [get_lists_for_space(client, str(s.get("id"))) for s in spaces]
-        folder_coros = [get_lists_for_folder(client, str(s.get("id"))) for s in spaces]
+        list_fetch_coros = [get_lists_for_space(client, s["id"]) for s in spaces]
+        folder_coros = [get_lists_for_folder(client, s["id"]) for s in spaces]
         lists_results = await asyncio.gather(*list_fetch_coros)
         folder_lists_results = await asyncio.gather(*folder_coros)
 
         for l in lists_results:
             all_lists.extend(l)
-        for f in folder_lists_results:
-            all_lists.extend(f["lists"])
+        for l in folder_lists_results:
+            all_lists.extend(l)
 
         seen = set()
         deduped_lists = []
@@ -214,7 +218,7 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
         tasks_coros = [process_list_worker(sem, client, team_id, lst, member_ids) for lst in deduped_lists]
 
-        CHUNK = max(10, concurrency)
+        CHUNK = min(10, concurrency)
         results = []
         for i in range(0, len(tasks_coros), CHUNK):
             chunk = tasks_coros[i : i + CHUNK]
@@ -223,7 +227,7 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
         all_tasks: list[dict] = []
         all_time_entries: list[dict] = []
-        for list_id, tasks, time_entries, meta in results:
+        for tasks, time_entries in results:
             all_tasks.extend(tasks)
             all_time_entries.extend(time_entries)
 
