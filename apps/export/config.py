@@ -21,3 +21,6 @@ REDIS_LOCK_TTL = int(_get("CLICKUP_EXPORT_LOCK_TTL", 60 * 30))
 
 # Auth
 API_AUTH_TOKEN = _get("API_AUTH_TOKEN", os.getenv("API_AUTH_TOKEN"))
+
+# Exports
+KEEP_LAST_N_EXPORTS = int(_get("KEEP_LAST_N_EXPORTS", 7))

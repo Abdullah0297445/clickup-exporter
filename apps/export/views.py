@@ -5,35 +5,12 @@ from django.views.decorators.http import require_GET
 from django.core.cache import cache
 
 from export import config
-from export.cache import get_current_cache_version
-
-
-def _verify_bearer_token(request: HttpRequest):
-    if not config.API_AUTH_TOKEN:
-        return False, JsonResponse({"detail": "Server not configured"}, status=500)
-
-    token_src = None
-    for key in ("token", "api_token", "authorization"):
-        val = request.GET.get(key)
-        if val:
-            token_src = val
-            break
-
-    if not token_src:
-        return False, JsonResponse({"detail": "Missing token query parameter"}, status=401)
-
-    parts = token_src.split()
-    token = parts[1] if len(parts) >= 2 else parts[-1]
-
-    if token != config.API_AUTH_TOKEN:
-        return False, JsonResponse({"detail": "Invalid token"}, status=401)
-
-    return True, None
+from export.utils import verify_bearer_token, get_latest_version
 
 
 @require_GET
 def export(request: HttpRequest):
-    ok, resp = _verify_bearer_token(request)
+    ok, resp = verify_bearer_token(request)
     if not ok:
         return resp
 
@@ -41,7 +18,7 @@ def export(request: HttpRequest):
     if not team_id:
         return JsonResponse({"detail": "team_id missing"}, status=400)
 
-    raw = cache.get(team_id, version=get_current_cache_version())
+    raw = cache.get(team_id, version=get_latest_version(team_id))
     if not raw:
         return JsonResponse({"status": "not_ready", "detail": "No cached export available"}, status=202)
     try:
