@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import timedelta
 
 from django.utils import timezone
 from django.core.cache import cache
@@ -27,7 +28,12 @@ def fetch_clickup_data_and_persist(self) -> dict:
         if not got_lock:
             return {"status": "in_progress"}
 
-        if cache.get(team_id, version=version):
+        existing_data = cache.get(team_id, version=version)
+        if existing_data and (
+                existing_data["status"] == "success" or (
+                    existing_data["status"] == "in_progress" and existing_data["started_at"] >= (timezone.now() - timedelta(minutes=15)).isoformat()
+                )
+        ):
             return {"status": "success"}
 
         meta = {"status": "in_progress", "started_at": timezone.now().isoformat()}
