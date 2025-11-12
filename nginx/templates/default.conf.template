@@ -15,6 +15,9 @@ server {
 
     server_name ${NGINX_HOST};
 
+    proxy_buffering off;
+    proxy_read_timeout ${REQUEST_TIMEOUT};
+
     location / {
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;

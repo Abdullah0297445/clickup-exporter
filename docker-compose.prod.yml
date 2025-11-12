@@ -48,7 +48,7 @@ services:
         condition: service_healthy
 
   nginx:
-    image: nginx
+    image: nginx:1.29.3
     depends_on:
       backend:
         condition: service_healthy

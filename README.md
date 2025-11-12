@@ -71,6 +71,7 @@ The service uses asynchronous processing for optimal performance and implements 
    DJANGO_PORT=8000
    FLOWER_USERNAME=admin
    FLOWER_PASSWORD=your_password
+   REQUEST_TIMEOUT=360
    ```
 
 3. **Start the Application**
@@ -91,16 +92,17 @@ make start
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CLICKUP_TOKEN` | ClickUp API token | Required |
-| `CLICKUP_TEAM_ID` | ClickUp team/workspace ID | Required |
-| `API_AUTH_TOKEN` | Bearer token for API authentication | Required |
-| `CONCURRENCY` | Number of concurrent API requests | 2 |
-| `MAX_RETRIES` | Maximum retry attempts for failed requests | 7 |
-| `INITIAL_BACKOFF` | Initial backoff delay (seconds) | 3.0 |
-| `REDIS_LOCK_TTL` | Redis lock timeout (seconds) | 1800 |
-| `KEEP_LAST_N_EXPORTS` | Number of export versions to retain | 7 |
+| Variable | Description                                                               | Default  |
+|----------|---------------------------------------------------------------------------|----------|
+| `CLICKUP_TOKEN` | ClickUp API token                                                         | Required |
+| `CLICKUP_TEAM_ID` | ClickUp team/workspace ID                                                 | Required |
+| `API_AUTH_TOKEN` | Bearer token for API authentication                                       | Required |
+| `CONCURRENCY` | Number of concurrent API requests                                         | 2        |
+| `MAX_RETRIES` | Maximum retry attempts for failed requests                                | 7        |
+| `INITIAL_BACKOFF` | Initial backoff delay (seconds)                                           | 3.0      |
+| `REDIS_LOCK_TTL` | Redis lock timeout (seconds)                                              | 1800     |
+| `KEEP_LAST_N_EXPORTS` | Number of export versions to retain                                       | 7        |
+| `REQUEST_TIMEOUT` | Number of seconds gunicorn & nginx are gonna allow a request to live idle | 360      |
 
 ### ClickUp API Setup
 
