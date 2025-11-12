@@ -1,0 +1,37 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - "set -euo pipefail"
+      - "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)"
+      - "echo \"AWS account: $AWS_ACCOUNT_ID\""
+      - "REGION=${AWS_DEFAULT_REGION:-ap-southeast-1}"
+      - "echo \"Region: $REGION\""
+      - "FULL_COMMIT=${CODEBUILD_RESOLVED_SOURCE_VERSION:-\"local\"}"
+      - "SHORT_COMMIT=$(echo \"$FULL_COMMIT\" | cut -c1-$IMAGE_TAG_LENGTH)"
+      - "REPO_URI=$AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$IMAGE_REPO_NAME"
+      - "echo \"Repository URI: $REPO_URI\""
+      - "echo \"Logging in to ECR...\""
+      - "aws ecr get-login-password --region \"$REGION\" | docker login --username AWS --password-stdin \"$AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com\""
+
+  build:
+    commands:
+      - "echo \"Building Docker image...\""
+      - "docker build -t \"$REPO_URI:$SHORT_COMMIT\" --provenance=false --platform linux/arm64 ."
+      - "echo \"DOCKER_IMAGE_URL=$REPO_URI:$SHORT_COMMIT\" > .image_uri_env"
+      - "echo \"Built and tagged $REPO_URI:$SHORT_COMMIT\""
+
+  post_build:
+    commands:
+      - "echo \"Pushing image to ECR...\""
+      - "docker push \"$REPO_URI:$SHORT_COMMIT\""
+      - "echo \"Image pushed: $REPO_URI:$SHORT_COMMIT\""
+
+artifacts:
+  files:
+    - docker-compose.prod.yml
+    - appspec.yml
+    - scripts/**/*
+    - nginx/**/*
+    - .image_uri_env

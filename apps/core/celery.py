@@ -19,6 +19,6 @@ app.autodiscover_tasks()
 app.conf.beat_schedule = {
     "fetch_clickup_data_and_persist": {
         "task": "export.tasks.fetch_clickup_data_and_persist",
-        "schedule": timedelta(hours=1),
+        "schedule": timedelta(hours=5),
     },
 }
