@@ -68,6 +68,9 @@ async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> list[d
         tasks = data.get("tasks", []) if data else []
         if not tasks:
             break
+        time_in_status = await get_time_in_status_for_tasks(client, [t["id"] for t in tasks])
+        for t in tasks:
+            t["time_in_status"] = time_in_status.get(t["id"], dict())
         all_tasks.extend(tasks)
         if data.get("last_page"):
             break
@@ -92,7 +95,7 @@ async def get_time_entries_for_list(
     return all_entries
 
 
-async def get_time_in_status_for_list(client: httpx.AsyncClient, task_ids: list[str]) -> dict:
+async def get_time_in_status_for_tasks(client: httpx.AsyncClient, task_ids: list[str]) -> dict:
     url = f"{BASE}/task/bulk_time_in_status/task_ids"
     data = await request_with_retry(client, "GET", url, params={"task_ids": task_ids})
     return data or dict()
@@ -151,7 +154,7 @@ async def process_list_worker(
     team_id: str,
     lst: dict,
     member_ids: list[str]
-) -> tuple[list[dict], list[dict], dict]:
+) -> tuple[list[dict], list[dict]]:
     async with sem:
         list_id = str(lst.get("id"))
         tasks = await paginate_list_tasks(client, list_id)
@@ -162,8 +165,7 @@ async def process_list_worker(
             tasks_with_space_name.append(t)
             task_ids.append(t["id"])
         time_entries = await get_time_entries_for_list(client, team_id, list_id, member_ids)
-        time_in_status = await get_time_in_status_for_list(client, task_ids)
-        return tasks, time_entries, time_in_status
+        return tasks, time_entries
 
 
 async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
@@ -214,18 +216,13 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
         all_tasks: list[dict] = []
         all_time_entries: list[dict] = []
-        all_time_in_statuses = {}
-        for tasks, time_entries, time_in_status in results:
+        for tasks, time_entries in results:
             all_tasks.extend(tasks)
             all_time_entries.extend(time_entries)
-            all_time_in_statuses.update(time_in_status)
 
         task_time_summary = aggregate_time_entries_by_task(all_time_entries)
 
-        tasks_with_time_summary: list[dict] = []
         for t in all_tasks:
             t["time_summary"] = task_time_summary.get(t["id"], list())
-            t["time_in_status"] = all_time_in_statuses.get(t["id"], dict())
-            tasks_with_time_summary.append(t)
 
-        return tasks_with_time_summary
+        return all_tasks
