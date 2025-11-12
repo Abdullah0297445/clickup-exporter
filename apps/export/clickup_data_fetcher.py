@@ -62,7 +62,7 @@ async def paginate_list_tasks(client: httpx.AsyncClient, list_id: str) -> list[d
     page = 0
     all_tasks: list[dict] = []
     while True:
-        params = {"page": page, "include_closed": "true"}
+        params = {"page": page, "include_closed": True, "reverse": True, "subtasks": True}
         url = f"{BASE}/list/{list_id}/task"
         data = await request_with_retry(client, "GET", url, params=params)
         tasks = data.get("tasks", []) if data else []
@@ -83,14 +83,19 @@ async def get_time_entries_for_list(
         "list_id": list_id,
         "start": 1735671600000,
         "end": int(timezone.now().timestamp() * 1000),
-        "assignee": ",".join(member_ids),
-        "include_location_names": True
+        "assignee": ",".join(member_ids)
     }
     url = f"{BASE}/team/{team_id}/time_entries"
     data = await request_with_retry(client, "GET", url, params=params)
     entries = data.get("data", []) if data else []
     all_entries.extend(entries)
     return all_entries
+
+
+async def get_time_in_status_for_list(client: httpx.AsyncClient, task_ids: list[str]) -> dict:
+    url = f"{BASE}/task/bulk_time_in_status/task_ids"
+    data = await request_with_retry(client, "GET", url, params={"task_ids": task_ids})
+    return data or dict()
 
 
 async def get_spaces(client: httpx.AsyncClient, team_id: str) -> list[dict]:
@@ -125,40 +130,19 @@ def ms_to_hours(ms: Optional[int]) -> Optional[float]:
 
 
 def aggregate_time_entries_by_task(entries: list[dict]) -> dict[str, list[dict]]:
-    agg: dict[str, dict[str, dict[str, Any]]] = {}
+    agg: dict[str, list[dict]] = {}
+
     for e in entries:
         try:
-            task_id = e["task"]["id"]
+            task_id: str = e["task"]["id"]
         except KeyError:
             continue
-        user_id = e["user"]["id"]
-        username = e["user"]["username"]
-        duration = e["duration"]
-        billable = e["billable"]
 
-        task_bucket = agg.setdefault(task_id, {})
-        user_bucket = task_bucket.setdefault(user_id, {"assignee_name": username, "billable_ms": 0, "non_billable_ms": 0})
-        if billable:
-            user_bucket["billable_ms"] += int(duration)
-        else:
-            user_bucket["non_billable_ms"] += int(duration)
+        if task_id not in agg:
+            agg[task_id] = []
+        agg[task_id].append(e)
 
-    result: dict[str, list[dict]] = {}
-    for task_id, users in agg.items():
-        lst = []
-        for uid, v in users.items():
-            lst.append(
-                {
-                    "assignee_id": uid,
-                    "assignee_name": v["assignee_name"],
-                    "billable_ms": v["billable_ms"],
-                    "non_billable_ms": v["non_billable_ms"],
-                    "billable_hours": ms_to_hours(v["billable_ms"]),
-                    "non_billable_hours": ms_to_hours(v["non_billable_ms"]),
-                }
-            )
-        result[task_id] = lst
-    return result
+    return agg
 
 
 async def process_list_worker(
@@ -167,16 +151,19 @@ async def process_list_worker(
     team_id: str,
     lst: dict,
     member_ids: list[str]
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], dict]:
     async with sem:
         list_id = str(lst.get("id"))
         tasks = await paginate_list_tasks(client, list_id)
         tasks_with_space_name = []
+        task_ids = []
         for t in tasks:
             t["space"]["name"] = lst["space"]["name"]
             tasks_with_space_name.append(t)
+            task_ids.append(t["id"])
         time_entries = await get_time_entries_for_list(client, team_id, list_id, member_ids)
-        return tasks, time_entries
+        time_in_status = await get_time_in_status_for_list(client, task_ids)
+        return tasks, time_entries, time_in_status
 
 
 async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
@@ -227,15 +214,18 @@ async def export_clickup_data(team_id: Optional[str] = None) -> list[dict]:
 
         all_tasks: list[dict] = []
         all_time_entries: list[dict] = []
-        for tasks, time_entries in results:
+        all_time_in_statuses = {}
+        for tasks, time_entries, time_in_status in results:
             all_tasks.extend(tasks)
             all_time_entries.extend(time_entries)
+            all_time_in_statuses.update(time_in_status)
 
         task_time_summary = aggregate_time_entries_by_task(all_time_entries)
 
         tasks_with_time_summary: list[dict] = []
         for t in all_tasks:
             t["time_summary"] = task_time_summary.get(t["id"], list())
+            t["time_in_status"] = all_time_in_statuses.get(t["id"], dict())
             tasks_with_time_summary.append(t)
 
         return tasks_with_time_summary
