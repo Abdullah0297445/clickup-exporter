@@ -1,5 +1,4 @@
 import asyncio
-import json
 from datetime import timedelta
 
 from django.utils import timezone
@@ -37,7 +36,7 @@ def fetch_clickup_data_and_persist(self) -> dict:
             return {"status": "success"}
 
         meta = {"status": "in_progress", "started_at": timezone.now().isoformat()}
-        cache.set(team_id, json.dumps(meta), version=version)
+        cache.set(team_id, meta, version=version)
 
         try:
             payload = asyncio.run(export_clickup_data(team_id))
@@ -48,7 +47,7 @@ def fetch_clickup_data_and_persist(self) -> dict:
                 "status_code": getattr(ee, "status", None),
                 "updated_at": timezone.now().isoformat()
             }
-            cache.set(team_id, json.dumps(err_meta), version=version)
+            cache.set(team_id, err_meta, version=version)
             raise
         except Exception:
             try:
@@ -60,7 +59,7 @@ def fetch_clickup_data_and_persist(self) -> dict:
             "data": payload,
             "updated_at": timezone.now().isoformat(),
         }
-        cache.set(team_id, json.dumps(store), version=version)
+        cache.set(team_id, store, version=version)
         cache.delete(team_id, version=get_earliest_version(team_id))
         return {"status": "success"}
     finally:
