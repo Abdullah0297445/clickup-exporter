@@ -1,9 +1,9 @@
-from django.http import JsonResponse, HttpRequest
+from django.http import JsonResponse, HttpRequest, StreamingHttpResponse
 from django.views.decorators.http import require_GET
 from django.core.cache import cache
 
 from export import config
-from export.utils import verify_bearer_token, get_latest_version
+from export.utils import verify_bearer_token, get_latest_version, iter_bytes
 
 
 @require_GET
@@ -21,6 +21,15 @@ def export(request: HttpRequest):
         return JsonResponse({"status": "not_ready", "detail": "No cached export available"}, status=202)
 
     if data.get("status") == "success" and "data" in data:
-        return JsonResponse(data["data"], status=200, safe=False)
+        if isinstance(data, (bytes, bytearray)):
+            return StreamingHttpResponse(
+                iter_bytes(bytes(data)),
+                content_type="application/json",
+            )
+        elif isinstance(data, str):
+            return StreamingHttpResponse(
+                iter_bytes(data.encode("utf-8")),
+                content_type="application/json; charset=utf-8",
+            )
 
     return JsonResponse(data, status=200, safe=False)

@@ -1,3 +1,5 @@
+from typing import Iterator
+
 from django.http import JsonResponse, HttpRequest
 
 from export import config
@@ -56,3 +58,11 @@ def get_latest_version(team_id):
         return None
 
     return latest.split(":")[1]
+
+
+def iter_bytes(b: bytes, chunk_size: int = config.RESPONSE_CHUNK_SIZE) -> Iterator[bytes]:
+    start = 0
+    while start < len(b):
+        end = min(start + chunk_size, len(b))
+        yield b[start:end]
+        start = end

@@ -16,7 +16,6 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "core.middlewares.healthcheck.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "django.middleware.gzip.GZipMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
