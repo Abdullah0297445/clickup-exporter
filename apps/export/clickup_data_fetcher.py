@@ -84,8 +84,8 @@ async def get_time_entries_for_list(
     all_entries: list[dict] = []
     params: dict[str, Any] = {
         "list_id": list_id,
-        "start": 1735671600000,
-        "end": int(timezone.now().timestamp() * 1000),
+        "start_date": 1735671600000, # 1st day of 2025
+        "end_date": int(timezone.now().timestamp() * 1000),
         "assignee": ",".join(member_ids)
     }
     url = f"{BASE}/team/{team_id}/time_entries"
